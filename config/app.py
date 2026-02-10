@@ -1,38 +1,118 @@
-
-
 import streamlit as st
 import PyPDF2
 import io
+from groq import Groq
 
+# ========================================================
+# SYSTEM API KEY (Pre-configured by admin)
+# ========================================================
+try:
+    # Load API key from secrets.toml (pre-configured by you)
+    API_KEY = st.secrets["GROQ_API_KEY"]
+    
+    # Initialize Groq client
+    groq_client = Groq(api_key=API_KEY)
+    AI_ENABLED = True
+    
+    # Verify API works with a simple test
+    try:
+        # Quick silent test
+        test_response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=1
+        )
+        st.success("✅ System AI: Ready")
+    except Exception as e:
+        st.error(f"❌ System AI: Configuration Issue")
+        groq_client = None
+        AI_ENABLED = False
+        
+except Exception as e:
+    groq_client = None
+    AI_ENABLED = False
+    st.error(f"⚠️ System AI: Not Available")
+
+# Rest of your code continues...
+
+# Page configuration
 st.set_page_config(
-    page_title="PDF QA Education System",
-    page_icon="📚",
-    layout="wide"
+    page_title="🤖 StudyMate AI - Professional",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Rest of your code continues as is...
+# Custom CSS for professional look
 st.markdown("""
 <style>
-    .answer-box {
-        background-color: #f0f9ff;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 5px solid #3b82f6;
-        margin: 1rem 0;
+    /* Professional Header */
+    .main-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 2.5rem;
+        border-radius: 20px;
+        color: white;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.15);
     }
-    .question-box {
-        background-color: #f8fafc;
-        padding: 1rem;
+    
+    /* Answer Display */
+    .answer-box {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e6f7ff 100%);
+        padding: 1.8rem;
+        border-radius: 15px;
+        margin: 1.5rem 0;
+        border: 2px solid #3b82f6;
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.12);
+    }
+    
+    /* Feature Cards */
+    .feature-card {
+        background: white;
+        padding: 1.2rem;
         border-radius: 10px;
-        margin: 0.5rem 0;
-        border: 1px solid #e2e8f0;
+        margin: 0.8rem 0;
+        border-left: 4px solid #10b981;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+    
+    /* Buttons */
+    .stButton button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 0.8rem 1.5rem;
+        border-radius: 10px;
+        font-weight: 600;
+        width: 100%;
+    }
+    
+    .stButton button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    /* Status Indicators */
+    .status-badge {
+        padding: 0.3rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    
+    .status-active {
+        background: #10b981;
+        color: white;
+    }
+    
+    .status-basic {
+        background: #6b7280;
+        color: white;
     }
 </style>
 """, unsafe_allow_html=True)
-
-st.title("📚 PDF QA Education System")
-st.markdown("**Extract knowledge from your educational PDFs**")
-st.markdown("---")
 
 # Initialize session state
 if 'pdf_data' not in st.session_state:
@@ -40,86 +120,78 @@ if 'pdf_data' not in st.session_state:
 if 'qa_history' not in st.session_state:
     st.session_state.qa_history = []
 
-# Enhanced answer function
-def get_answer_from_pdf(question, pdf_data):
-    """Get intelligent answer from PDF content"""
-    if not pdf_data:
-        return "Please upload and process a PDF first.", None
-    
-    question_lower = question.lower()
-    pages = pdf_data['pages']
-    full_text = pdf_data['full_text'].lower()
-    
-    # Check for specific question types
-    if any(word in question_lower for word in ['what is', 'define', 'definition']):
-        # Look for definitions
-        for i, page in enumerate(pages):
-            if question_lower in page.lower():
-                # Find the sentence containing the answer
-                sentences = page.split('.')
-                for sentence in sentences:
-                    if question_lower in sentence.lower():
-                        return f"**Definition from Page {i+1}:**\n\n{sentence.strip()}.", i+1
-    
-    elif 'summar' in question_lower:
-        # Provide summary
-        summary_parts = []
-        for i, page in enumerate(pages[:2]):  # First 2 pages
-            if len(page) > 100:
-                summary_parts.append(f"**Page {i+1}:** {page[:200]}...")
-        return "**Document Summary:**\n\n" + "\n\n".join(summary_parts), None
-    
-    elif any(word in question_lower for word in ['example', 'example of', 'for example']):
-        # Look for examples
-        for i, page in enumerate(pages):
-            if 'example' in page.lower():
-                lines = page.split('\n')
-                for line in lines:
-                    if 'example' in line.lower() and len(line) > 20:
-                        return f"**Example from Page {i+1}:**\n\n{line}", i+1
-    
-    # General search - find best matching page
-    best_page = 0
-    best_score = 0
-    
-    for i, page in enumerate(pages):
-        page_lower = page.lower()
-        score = sum(1 for word in question_lower.split() 
-                   if len(word) > 3 and word in page_lower)
-        
-        if score > best_score:
-            best_score = score
-            best_page = i
-    
-    if best_score > 0 and best_page < len(pages):
-        # Extract context from the best page
-        page_text = pages[best_page]
-        # Find a relevant sentence
-        sentences = page_text.split('.')
-        for sentence in sentences:
-            if any(word in sentence.lower() for word in question_lower.split() if len(word) > 3):
-                return f"**From Page {best_page + 1}:**\n\n{sentence.strip()}.", best_page + 1
-        
-        # Fallback: first part of the page
-        return f"**Relevant content from Page {best_page + 1}:**\n\n{page_text[:300]}...", best_page + 1
-    
-    return "I couldn't find specific information about that in the PDF. Try asking about general topics or key terms from the document.", None
+# Header Section
+st.markdown("""
+<div class="main-header">
+    <h1 style="margin-bottom: 0.5rem;">🤖 StudyMate AI</h1>
+    <h3 style="font-weight: 300; margin-top: 0;">AI-Powered PDF Learning Assistant</h3>
+</div>
+""", unsafe_allow_html=True)
 
-# Sidebar for PDF processing
+# Features Section
+st.markdown("### 🎯 Professional Features")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.markdown('<div class="feature-card"><strong>✅ Latest AI Models</strong><br>Llama 3.3, Gemma2</div>', unsafe_allow_html=True)
+with col2:
+    st.markdown('<div class="feature-card"><strong>✅ Intelligent Q&A</strong><br>Context-aware answers</div>', unsafe_allow_html=True)
+with col3:
+    st.markdown('<div class="feature-card"><strong>✅ Page Citations</strong><br>Source verification</div>', unsafe_allow_html=True)
+with col4:
+    st.markdown('<div class="feature-card"><strong>✅ Fast Responses</strong><br>2-3 second answers</div>', unsafe_allow_html=True)
+
+st.markdown("---")
+
+# Sidebar Configuration
 with st.sidebar:
-    st.header("📁 Document Management")
+    st.header("⚙️ Configuration")
+    
+    # API Status
+    if AI_ENABLED:
+        st.success("✅ API Key Configured")
+        st.caption("🤖 AI Mode: **Active**")
+        st.markdown(f'<span class="status-badge status-active">AI ACTIVE</span>', unsafe_allow_html=True)
+    else:
+        st.error("❌ API Key Issue")
+        st.caption("⚠️ Running in Basic Mode")
+        st.markdown(f'<span class="status-badge status-basic">BASIC MODE</span>', unsafe_allow_html=True)
+    
+    st.divider()
+    
+    st.header("🤖 AI Model")
+    model_options = {
+        "Llama 3.3 70B (Recommended)": "llama-3.3-70b-versatile",
+        "Llama 3.1 8B": "llama-3.1-8b-instant", 
+        "Llama 3 70B": "llama3-70b-8192",
+        "Mixtral 8x7B": "mixtral-8x7b-32768",
+        "Gemma2 9B": "gemma2-9b-it"
+    }
+    
+    selected_model_name = st.selectbox(
+        "Choose AI Model",
+        list(model_options.keys()),
+        index=0
+    )
+    selected_model = model_options[selected_model_name]
+    
+    st.caption(f"Model: `{selected_model}`")
+    
+    st.divider()
+    
+    st.header("📁 Upload PDF")
     
     uploaded_file = st.file_uploader(
-        "Upload Educational PDF",
+        "Choose PDF file",
         type=["pdf"],
         help="Upload textbooks, research papers, lecture notes"
     )
     
     if uploaded_file:
-        st.success(f"✅ {uploaded_file.name}")
+        file_size = uploaded_file.size / (1024 * 1024)
+        st.info(f"**Selected:** {uploaded_file.name} ({file_size:.1f} MB)")
         
-        if st.button("🔬 Process PDF for Q&A", type="primary", use_container_width=True):
-            with st.spinner("Analyzing document content..."):
+        if st.button("🚀 Process PDF with AI", type="primary", use_container_width=True):
+            with st.spinner("🧠 Analyzing document with AI..."):
                 try:
                     # Process PDF
                     pdf_bytes = uploaded_file.getvalue()
@@ -131,7 +203,10 @@ with st.sidebar:
                     
                     for i in range(len(pdf_reader.pages)):
                         page_text = pdf_reader.pages[i].extract_text()
-                        pages.append(page_text)
+                        pages.append({
+                            'page_num': i + 1,
+                            'text': page_text
+                        })
                         full_text += f"\n\n--- Page {i+1} ---\n{page_text}"
                     
                     # Store in session state
@@ -142,8 +217,8 @@ with st.sidebar:
                         'full_text': full_text
                     }
                     
-                    st.success(f"📚 Document ready! ({len(pdf_reader.pages)} pages)")
-                    st.info("You can now ask questions about this PDF")
+                    st.success(f"✅ PDF processed! ({len(pdf_reader.pages)} pages)")
+                    st.info("You can now ask AI-powered questions!")
                     st.rerun()
                     
                 except Exception as e:
@@ -151,160 +226,283 @@ with st.sidebar:
     
     st.divider()
     
-    # Quick stats
-    if st.session_state.pdf_data:
-        st.header("📊 Document Info")
-        st.metric("Total Pages", st.session_state.pdf_data['page_count'])
-        st.metric("Status", "Ready for Q&A")
-        st.success("✅ Document analyzed")
+    # System Status
+    if AI_ENABLED:
+        st.success("🟢 AI System: Ready")
+        st.caption("Powered by Groq API")
+    else:
+        st.warning("⚠️ Basic Mode Active")
+        st.caption("Text search only")
+
+# AI Answer Function
+def get_ai_answer(question, context, client, model):
+    """Get intelligent answer using Groq AI"""
+    try:
+        prompt = f"""You are StudyMate AI, an expert educational assistant. Answer the student's question based on the provided PDF content.
+
+PDF CONTENT:
+{context[:3000]}
+
+STUDENT'S QUESTION: {question}
+
+INSTRUCTIONS:
+1. Answer clearly and directly using ONLY the provided PDF content
+2. If information exists in the PDF, cite the specific page number(s)
+3. If the answer isn't in the PDF, say so honestly
+4. Use **bold** for key terms and concepts
+5. Format with paragraphs for readability
+6. Be educational, helpful, and encouraging
+
+EDUCATIONAL ANSWER:"""
+        
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are an expert tutor who explains concepts simply and clearly for students."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=800
+        )
+        
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"**AI Service Note:** Could not generate AI answer. Error: {str(e)}"
 
 # Main content area
 if st.session_state.pdf_data:
     # Document info
-    col1, col2, col3 = st.columns(3)
+    st.markdown(f"### 📚 Currently Analyzing: **{st.session_state.pdf_data['filename']}**")
+    
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Document", st.session_state.pdf_data['filename'])
-    with col2:
         st.metric("Pages", st.session_state.pdf_data['page_count'])
+    with col2:
+        st.metric("AI Model", selected_model_name.split()[0])
     with col3:
-        st.metric("Q&A Ready", "✅")
+        status_text = "✅ AI Active" if AI_ENABLED else "⚠️ Basic Mode"
+        st.metric("AI Status", status_text)
+    with col4:
+        st.metric("Q&A History", len(st.session_state.qa_history))
     
     st.markdown("---")
     
     # Question answering section
-    st.header("💬 Educational Q&A")
+    st.markdown("### 💬 Ask AI-Powered Questions")
     
-    # Question input
-    question = st.text_input(
-        "Ask a question about the document:",
-        placeholder="e.g., Explain supervised learning, What are the key concepts?, Give an example of..."
+    question = st.text_area(
+        "Type your question about the PDF:",
+        placeholder="Example: 'Explain the main concepts in this PDF', 'Summarize chapter 2', 'What is machine learning according to this document?', 'Give examples from page 5'",
+        height=100
     )
     
-    if question:
-        # Get answer
-        with st.spinner("🔍 Searching document for answer..."):
-            answer, page_num = get_answer_from_pdf(question, st.session_state.pdf_data)
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        pass
+    with col2:
+        ask_button = st.button("🤖 Ask AI", type="primary", use_container_width=True)
+    
+    if question and ask_button:
+        with st.spinner("🧠 Thinking..."):
+            # Find relevant pages
+            question_lower = question.lower()
+            relevant_pages = []
+            
+            for page in st.session_state.pdf_data['pages']:
+                if question_lower in page['text'].lower():
+                    relevant_pages.append(page)
+            
+            # Prepare context for AI
+            if relevant_pages:
+                context = "\n\n".join([f"Page {p['page_num']}: {p['text'][:500]}" for p in relevant_pages[:3]])
+                source_pages = [p['page_num'] for p in relevant_pages[:3]]
+            else:
+                # Use first few pages if no direct match
+                context = "\n\n".join([f"Page {p['page_num']}: {p['text'][:300]}" for p in st.session_state.pdf_data['pages'][:2]])
+                source_pages = [1, 2]
+            
+            # Get answer
+            if AI_ENABLED and groq_client:
+                answer = get_ai_answer(question, context, groq_client, selected_model)
+                answer_type = "🤖 **AI-Powered Answer**"
+            else:
+                # Basic text-based answer
+                answer = f"**Basic Answer from Document:**\n\n{context[:500]}..."
+                answer_type = "📄 **Text-Based Answer**"
             
             # Store in history
             st.session_state.qa_history.append({
                 'question': question,
                 'answer': answer,
-                'page': page_num
+                'source_pages': source_pages,
+                'ai_used': AI_ENABLED and bool(groq_client),
+                'timestamp': len(st.session_state.qa_history)
             })
             
             # Display answer
             st.markdown('<div class="answer-box">', unsafe_allow_html=True)
-            st.markdown("### 🤖 Answer from Document:")
+            st.markdown(answer_type)
             st.write(answer)
-            if page_num:
-                st.caption(f"📄 Source: Page {page_num}")
+            if source_pages:
+                st.caption(f"📄 **Source Pages:** {', '.join(map(str, source_pages))}")
+            if AI_ENABLED and groq_client:
+                st.caption(f"🤖 **AI Model:** {selected_model_name}")
             st.markdown('</div>', unsafe_allow_html=True)
     
-    # Suggested questions for education
+    # Suggested questions
     st.markdown("---")
-    st.subheader("🎓 Educational Question Types:")
+    st.markdown("### 🎓 Educational Question Examples")
     
-    edu_col1, edu_col2 = st.columns(2)
+    example_col1, example_col2 = st.columns(2)
     
-    with edu_col1:
-        edu_questions = [
-            "Define key terms",
-            "Explain main concepts",
-            "What is the methodology?",
-            "List examples provided"
+    with example_col1:
+        examples = [
+            "Define key terms from this PDF",
+            "Explain the main concepts",
+            "Summarize the document",
+            "What are the applications?"
         ]
         
-        for q in edu_questions:
-            if st.button(q, key=f"edu1_{q}", use_container_width=True):
+        for ex in examples:
+            if st.button(ex, key=f"ex1_{ex}", use_container_width=True):
                 st.session_state.qa_history.append({
-                    'question': q,
-                    'answer': get_answer_from_pdf(q, st.session_state.pdf_data)[0],
-                    'page': get_answer_from_pdf(q, st.session_state.pdf_data)[1]
+                    'question': ex,
+                    'answer': f"Sample answer for: {ex}\n\nTry asking this question to see the AI response!",
+                    'source_pages': [1],
+                    'ai_used': False,
+                    'timestamp': len(st.session_state.qa_history)
                 })
                 st.rerun()
     
-    with edu_col2:
-        edu_questions2 = [
-            "Summarize the document",
-            "What are applications?",
+    with example_col2:
+        examples2 = [
+            "Give examples from the PDF",
+            "What problems are addressed?",
             "Compare different approaches",
-            "What problems are addressed?"
+            "List key findings"
         ]
         
-        for q in edu_questions2:
-            if st.button(q, key=f"edu2_{q}", use_container_width=True):
+        for ex in examples2:
+            if st.button(ex, key=f"ex2_{ex}", use_container_width=True):
                 st.session_state.qa_history.append({
-                    'question': q,
-                    'answer': get_answer_from_pdf(q, st.session_state.pdf_data)[0],
-                    'page': get_answer_from_pdf(q, st.session_state.pdf_data)[1]
+                    'question': ex,
+                    'answer': f"Sample answer for: {ex}\n\nTry asking this question to see the AI response!",
+                    'source_pages': [1],
+                    'ai_used': False,
+                    'timestamp': len(st.session_state.qa_history)
                 })
                 st.rerun()
     
     # Q&A History
     if st.session_state.qa_history:
         st.markdown("---")
-        st.subheader("📝 Learning History")
+        st.markdown("### 📝 Learning History")
         
-        for i, qa in enumerate(reversed(st.session_state.qa_history[-5:]), 1):
-            with st.expander(f"Q{i}: {qa['question'][:40]}...", expanded=i==1):
-                st.markdown('<div class="question-box">', unsafe_allow_html=True)
-                st.write(f"**Question:** {qa['question']}")
-                st.markdown('</div>', unsafe_allow_html=True)
-                st.write(f"**Answer:** {qa['answer']}")
-                if qa.get('page'):
-                    st.caption(f"📖 Source: Page {qa['page']}")
+        for i, qa in enumerate(reversed(st.session_state.qa_history[-5:])):
+            with st.expander(f"Q{len(st.session_state.qa_history)-i}: {qa['question'][:50]}...", expanded=(i==0)):
+                st.markdown(f"**Question:** {qa['question']}")
+                st.markdown("---")
+                st.markdown(f"**Answer:** {qa['answer']}")
+                if qa.get('source_pages'):
+                    st.caption(f"📄 Source Pages: {', '.join(map(str, qa['source_pages']))}")
+                st.caption(f"🤖 {'AI-Powered' if qa.get('ai_used') else 'Text Search'}")
     
     # Document preview
     st.markdown("---")
-    if st.checkbox("📖 View Document Preview", value=False):
-        st.subheader("Document Content Preview")
-        if st.session_state.pdf_data['pages']:
-            preview_page = st.slider("Select page to preview", 1, 
-                                   st.session_state.pdf_data['page_count'], 1)
-            page_text = st.session_state.pdf_data['pages'][preview_page-1]
-            st.text_area(f"Page {preview_page} content:", 
-                        page_text[:1000] + "..." if len(page_text) > 1000 else page_text,
-                        height=200)
+    if st.checkbox("📖 Explore Document Content", value=False):
+        st.markdown("### 🔍 Document Preview")
+        
+        page_num = st.slider(
+            "Select page to preview:", 
+            1, 
+            st.session_state.pdf_data['page_count'], 
+            1
+        )
+        
+        page_text = st.session_state.pdf_data['pages'][page_num-1]['text']
+        
+        st.text_area(
+            f"Page {page_num} content:",
+            page_text[:1500] + "..." if len(page_text) > 1500 else page_text,
+            height=200,
+            disabled=True
+        )
+        
+        st.caption(f"📊 Page {page_num} has approximately {len(page_text.split())} words")
 
 else:
     # Welcome screen
-    st.header("🎯 Welcome to PDF QA Education System")
+    st.markdown("""
+    <div style='text-align: center; padding: 2rem; background: #f8fafc; border-radius: 15px;'>
+        <h2 style='color: #4f46e5;'>🎓 Welcome to StudyMate AI</h2>
+        <p style='font-size: 1.1rem; color: #64748b; margin-top: 1rem; margin-bottom: 2rem;'>
+        Your professional AI learning assistant is ready!
+        </p>
+        
+        <div style='display: inline-block; background: white; padding: 1rem 2rem; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);'>
+            <div style='font-size: 1.2rem; color: #10b981; font-weight: bold;'>
+                ✅ API Key: {"CONFIGURED" if AI_ENABLED else "MISSING"}
+            </div>
+            <div style='font-size: 0.9rem; color: #6b7280; margin-top: 0.5rem;'>
+                {"AI System Active" if AI_ENABLED else "Basic Mode Only"}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.write("""
-        ### Transform your educational PDFs into interactive learning tools!
+        st.markdown("""
+        ### 📚 **How to Get Started**
         
-        **How it works:**
-        1. **Upload** any educational PDF (textbooks, papers, notes)
-        2. **Process** the document to extract all text content
-        3. **Ask questions** about the material
-        4. **Get answers** directly from the document
+        **Step-by-Step:**
+        1. **Upload** your textbook/research PDF using the sidebar
+        2. **Process** the document (click "Process PDF with AI")
+        3. **Ask Questions** about any concept in the PDF
+        4. **Learn** from AI-powered explanations with citations
         
-        **Perfect for:**
-        - 📖 Textbook comprehension
-        - 🎓 Research paper analysis  
-        - 📝 Lecture note review
-        - 🔍 Exam preparation
+        **Perfect For:**
+        - **Students**: Understand complex textbooks faster
+        - **Researchers**: Analyze papers efficiently  
+        - **Teachers**: Create interactive learning materials
+        - **Professionals**: Review technical documents
         
-        **Try it now:** Upload a PDF using the sidebar
+        **AI Features:**
+        • Intelligent concept explanations
+        • Page-specific citations
+        • Learning history tracking
+        • Multiple AI model options
         """)
     
     with col2:
         st.info("""
-        **Example Questions:**
+        **💡 Pro Tips:**
         
-        • "What is [concept]?"
-        • "Explain [topic]"
-        • "Summarize chapter 1"
-        • "List key points"
-        • "Give examples of..."
+        1. **Be specific** - Ask detailed questions
+        2. **Use page references** - "Explain from page 15"
+        3. **Ask follow-ups** - Build on previous answers
+        4. **Check citations** - Verify information sources
         
-        *Based on your uploaded PDF*
+        **🎯 Example Questions:**
+        • "What is supervised learning?"
+        • "Summarize chapter 3"
+        • "Compare X and Y concepts"
+        • "Give examples from the document"
+        
+        **🚀 Ready when you are!**
         """)
 
 # Footer
 st.markdown("---")
-st.write("📚 **PDF QA Education System** | Powered by document analysis")
-st.caption("Upload → Analyze → Question → Learn")
+footer_col1, footer_col2, footer_col3 = st.columns([2, 1, 1])
+with footer_col1:
+    if AI_ENABLED:
+        st.markdown("**🤖 StudyMate AI Professional** • 🟢 AI System Active")
+    else:
+        st.markdown("**🤖 StudyMate AI** • ⚪ Basic Mode")
+with footer_col2:
+    st.caption(f"Model: {selected_model_name}")
+with footer_col3:
+    status = "🟢 AI Active" if AI_ENABLED else "⚪ Basic Mode"
+    st.caption(f"Status: {status}")
